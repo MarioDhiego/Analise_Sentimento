@@ -1,394 +1,268 @@
-#-------------------------------------------------------------------------------
-# PACKAGES ---------------------------------------------------------------------
-# Pacotes ou bibliotecas utilizadas.
 
-library(devtools)      # Baixar pacote do github
-library(tidytext)      # Pacote de text mining
-library(tidyverse)     # Manipulação de dados
-library(magrittr)      # Operador pipe
-library(stringr)       # Manipulacao de texto
-library(rvest)         # web scraping
-library(quanteda)      # Analise Quantitativa de texto
+#====================================================#
+#       Análise Textual de Clássicos Brasileiros    #
+#====================================================#
+
+#==============================
+# 1️⃣ Pacotes
+#==============================
+library(literaturaBR)  # textos clássicos
+library(tidytext)      # text mining
+library(tidyverse)     # manipulação de dados
+library(stringr)       # manipulação de texto
+library(quanteda)      # análise quantitativa de texto
 library(quanteda.textplots)
-library(qdap)          # Analise Quanlitativa de texto
-library(forcats)       # manipulacao de fatores
-library(ggthemes)      # Temas para o ggplot2
-library(lexiconPT)     # Dicionário Lexico de palavras
-#-------------------------------------------------------------------------------
-#-------------------------------------------------------------------------------
+library(quanteda.textstats)
+library(qdap)          # complementar (opcional)
+library(forcats)       # manipulação de fatores
+library(ggthemes)      # temas para ggplot2
+library(lexiconPT)     # léxicos em português
+library(devtools)
+library(patchwork) 
+library(reshape2)
+library(viridis)   # paleta de cores
+library(dendextend) # para dendrograma
 
 
-
-
-#-------------------------------------------------------------------------------
-# Web Scraping -----------------------------------------------------------------
-#-------------------------------------------------------------------------------
-rm_accent <- function(x) {
-  if (.Platform$OS.type == 'unix') {
-    gsub("`", "", iconv(x, to = "ASCII//TRANSLIT"))
-  } else {
-    gsub("`", "", iconv(x, from = 'latin1', to="ASCII//TRANSLIT"))
-  }
-}
-extract_chapter_url <- function(wikisource_book_page, xpath_chapters){
-  # First function: scrape chapters urls of a given book url
-  # url example: https://pt.wikisource.org/wiki/A_escrava_Isaura
-  
-  book_html <- wikisource_book_page %>% read_html()
-  
-  chapters <- book_html %>%
-    html_nodes(xpath = xpath_chapters)
-  # extract chapter names and urls
-  chapter_names <- chapters %>% html_text()
-  chapter_urls <- chapters %>% html_attr("href")
-  
-  # extract chapter names and urls from table if it exists
-  chapter_table <- book_html %>%
-    html_nodes(xpath = '//*[@id="mw-content-text"]/div/table[3]') %>%
-    html_nodes(css = "a")
-  
-  if (length(chapter_table) > 0){
-    chapter_names_table <- chapter_table %>% html_text()
-    chapter_urls_table <- chapter_table %>% html_attr("href")
-    
-    chapter_names <- c(chapter_names, chapter_names_table)
-    chapter_urls <- c(chapter_urls, chapter_urls_table)
-  }
-  
-  chapter_urls <- paste0("https://pt.wikisource.org", chapter_urls)
-  # extract name of book
-  book_name <- book_html %>%
-    html_nodes(xpath  = '//*[@id="firstHeading"]') %>%
-    html_text()
-  
-  # return as a dataframe
-  data.frame(book_name, chapter_name = chapter_names, url = chapter_urls,
-             stringsAsFactors = FALSE)
-}
-
-extract_chapter_text <- function(wikisource_chapter_page, xpath_type){
-  
-  if (xpath_type == 'A'){
-    xpath_main <- '//*[@id="mw-content-text"]/div/p'
-    xpath_b <- '//*[@id="mw-content-text"]/div/div/p'
-  } else if(xpath_type == "B"){
-    xpath_main <- '//*[@id="mw-content-text"]/div/div/p'
-    xpath_b <- '//*[@id="mw-content-text"]/div/div/p'
-  } else {
-    stop("Choose A or B for xpath_type")
-  }
-  
-  chp <- wikisource_chapter_page %>%
-    read_html() %>%
-    # xpath to extract chapter text
-    html_nodes(xpath = xpath_main)# %>% html_text()# %>% str_split("[\n]") %>% unlist()
-  
-  if (length(chp) == 0){
-    chp <- wikisource_chapter_page %>%
-      read_html() %>%
-      html_nodes(xpath = xpath_b) %>%
-      html_text()
-    # remove header
-    chp <- chp[-1]
-    # if object is still empty, use another xpath
-    # if (length(chp) == 0){
-    #   chp <- wikisource_chapter_page %>%
-    #     read_html() %>%
-    #     html_nodes(xpath = xpath_c) %>%
-    #     html_text()
-    # }
-  } else{
-    chp <- chp %>%
-      html_text()
-  }
-
-  # remove empty lines
-  chp <- chp[chp != ""]
-  paragraph_number <- seq_along(chp)
-  
-  if (length(chp) == 0){
-    paragraph_number <- NA_integer_
-    chp <- NA_character_
-  }
-  
-  data.frame(url = wikisource_chapter_page, paragraph_number, text = chp,
-             stringsAsFactors = FALSE)
-}
-
-### function to extract text of a whole book
-extract_book <- function(wikisource_book_page,
-                         xpath_type,
-                         xpath_chapters = '//*[@id="mw-content-text"]/div/ul/li/a'){
-  df_chapters_urls <- extract_chapter_url(wikisource_book_page, xpath_chapters)
-  # check if dataframe
-  if(!inherits(df_chapters_urls, "data.frame")) {
-    stop("Output of extract_url_chapters() not a dataframe")
-  }
-  df_chapters_text <- df_chapters_urls$url %>%
-    map_df(extract_chapter_text, xpath_type  = xpath_type)
-  
-  df <- left_join(df_chapters_urls, df_chapters_text, by = "url")
-  return(df)
-}
-
-
-# A escrava Isaura #
-url <- "https://pt.wikisource.org/wiki/A_escrava_Isaura"
-escrava_isaura <- extract_book(url, xpath_type = "A")
-escrava
-use_data(escrava_isaura, overwrite = TRUE)
-
-# O Ateneu
-url <- "https://pt.wikisource.org/wiki/O_Ateneu"
-ateneu <- extract_book(url, xpath_type = "A")
-use_data(ateneu, overwrite = TRUE)
-
-# Memórias Póstumas de Bras Cubas
-url <- "https://pt.wikisource.org/wiki/Mem%C3%B3rias_P%C3%B3stumas_de_Br%C3%A1s_Cubas"
-system.time(memorias_postumas_bras_cubas <- extract_book(url, xpath_type = "B"))
-use_data(memorias_postumas_bras_cubas, overwrite = TRUE)
-
-# O Alienista
-url <- "https://pt.wikisource.org/wiki/O_Alienista"
-alienista <- extract_book(url, "B")
-use_data(alienista, overwrite = TRUE)
-
-# Memorias de um Sargento de Milicias
-url <- "https://pt.wikisource.org/wiki/Mem%C3%B3rias_de_um_Sargento_de_Mil%C3%ADcias"
-memorias_de_um_sargento_de_milicias <- extract_book(url, "B")
-use_data(memorias_de_um_sargento_de_milicias, overwrite = TRUE)
-
-# O Cortiço #
-url <- "https://pt.wikisource.org/wiki/O_Corti%C3%A7o"
-cortico <- extract_book(url, "B", xpath_chapters = '//*[@id="mw-content-text"]/div/div/div/div/div[1]/div/span/a')
-use_data(cortico, overwrite = TRUE)
-
-# Noite na Taverna #
-url <- "https://pt.wikisource.org/wiki/Noite_na_Taverna"
-noite_na_taverna <- extract_book(url, "B")
-use_data(noite_na_taverna, overwrite = TRUE)
-
-# Dom Casmurro #
-url <- "https://pt.wikisource.org/wiki/Dom_Casmurro"
-dom_casmurro <- extract_book(url, "A")
-use_data(dom_casmurro, overwrite = TRUE)
-#-------------------------------------------------------------------------------
-
-
-# DATA FRAME -------------------------------------------------------------------
-# Importar os datasets e transformar em um dataset único.
-
+#==============================
+# 2️⃣ Importar os livros
+#==============================
+data("memorias_de_um_sargento_de_milicias")
+data("memorias_postumas_bras_cubas")
 data("alienista")
+data("escrava_isaura")
+data("ateneu")
 data("cortico")
 data("dom_casmurro")
-data("memorias_postumas_bras_cubas")
-data("memorias_de_um_sargento_de_milicias")
-data("ateneu")
-data("escrava_isaura")
 data("noite_na_taverna")
 
-df <- bind_rows(alienista,
-                cortico,
-                dom_casmurro,
-                memorias_postumas_bras_cubas,
-                memorias_de_um_sargento_de_milicias,
-                ateneu,
-                escrava_isaura,
-                noite_na_taverna)
-#-------------------------------------------------------------------------------
+# Unir todos em um único data frame
+df <- bind_rows(
+  memorias_de_um_sargento_de_milicias,
+  memorias_postumas_bras_cubas,
+  alienista,
+  escrava_isaura,
+  ateneu,
+  cortico,
+  dom_casmurro,
+  noite_na_taverna
+)
 
-
-# ESTRUTURA DATA FRAME ---------------------------------------------------------
 glimpse(df)
-head(df)
-#-------------------------------------------------------------------------------
 
-
-# CORPUS DE TEXTO --------------------------------------------------------------
-# converter o dataframe dos livros em um objeto do tipo corpus.
-# Datasets possuem a mesma estrutura onde: 
-# cada linha corresponde a um parágrafo de um livro e contêm 5 variáveis:
-
-
-
-df_corpus <- df %>% 
-  # agrupar por livro
-  group_by(book_name) %>% 
-  # formatar o dataframe para que so tenha uma linha por livro
-  summarise(text = paste0(text, sep = "", collapse = ". "))
+#==============================
+# 3️⃣ Criar dataframe por livro
+#==============================
+df_corpus <- df %>%
+  group_by(book_name) %>%
+  summarise(text = paste0(text, collapse = ". "))
 
 dim(df_corpus)
-#-------------------------------------------------------------------------------
 
-
-
-# CONTAGEM DE PALAVRAS ---------------------------------------------------------
-# Types:     N°de Palavras Diferentes
-# Tokens:    N°Total de Palavras
-# Sentences:  N°de Frases em cada Livro
-
-meu_corpus <- quanteda::corpus(df_corpus$text, 
-                               docnames = df_corpus$book_name)
+#==============================
+# 4️⃣ Criar corpus
+#==============================
+meu_corpus <- quanteda::corpus(df_corpus$text, docnames = df_corpus$book_name)
 summary(meu_corpus)
-#-------------------------------------------------------------------------------
 
+#==============================
+# 5️⃣ Criar tokens e DFM (quanteda ≥3.x)
+#==============================
+# 5.1 Criar tokens e remover pontuação
+corpus_tokens <- tokens(meu_corpus, remove_punct = TRUE)
 
-# Document-Feature Matrix ------------------------------------------------------
+# 5.2 Remover stopwords em português
+corpus_tokens <- tokens_remove(corpus_tokens, stopwords("portuguese"))
 
-# Tokenizar o corpus
-tokens_corpus <- tokens(meu_corpus, remove_punct = TRUE)
+# 5.3 Criar dfm a partir dos tokens
+corpus_dfm <- dfm(corpus_tokens)
 
-# Criar o dfm a partir dos tokens
-corpus_dfm <- dfm(tokens_corpus)
+# 5.4 Agrupar por livro
+corpus_dfm <- dfm_group(corpus_dfm, groups = docnames(meu_corpus))
 
-# Agrupar o dfm por livro
-corpus_dfm_grouped <- dfm_group(corpus_dfm, groups = df_corpus$book_name)
+# 5.5 Top palavras
+cat("Top 20 palavras do corpus inteiro:\n")
+print(topfeatures(corpus_dfm, 20))
 
-# Remover Pontuações/stopwords
-corpus_dfm_grouped <- dfm_remove(corpus_dfm_grouped, quanteda::stopwords("portuguese"))
+cat("\nTop 20 palavras por livro:\n")
+for (i in docnames(corpus_dfm)) {
+  cat("\nLivro:", i, "\n")
+  print(topfeatures(corpus_dfm[i, ], 20))
+}
 
-# Usar topfeatures para obter as 30 palavras mais comuns
-top_words <- topfeatures(corpus_dfm_grouped, 30)
-print(top_words)
-
-# Para um livro específico (substitua "NomeDoLivro" pelo nome real do livro)
-top_words_book <- topfeatures(corpus_dfm_grouped[, df_corpus$book_name == "escrava_isaura"], 30)
-print(top_words_book)
-#-------------------------------------------------------------------------------
-
-# Retorna Ocorrência de cada palavra em, cada livro.
-
-dfm_sort(corpus_dfm)[, 1:50]
-#-------------------------------------------------------------------------------
-
-
-# OCORRÊNCIA DE PALAVRAS -------------------------------------------------------
-
+#==============================
+# 6️⃣ Ocorrências de palavras específicas
+#==============================
 dfm_select(corpus_dfm, "amor")
-dfm_select(corpus_dfm, "fogo")
-dfm_select(corpus_dfm, "paixão")
-#-------------------------------------------------------------------------------
+kwic(corpus_tokens, "amor") %>% head()
 
 
-# CONTEXTO DA PALAVRA ----------------------------------------------------------
-
-tokens_corpus <- tokens(meu_corpus)
-concordancias <- kwic(tokens_corpus, "amor") %>% head(10) 
-print(concordancias)
-#-------------------------------------------------------------------------------
-
-# Palavras + Usadas
-topfeatures(corpus_dfm, groups = df_corpus$book_name)
+# Gráficos X-Ray
+kwic(corpus_tokens, "amor") %>% textplot_xray(scale = "relative")
+kwic(corpus_tokens, "liberdade") %>% textplot_xray(scale = "relative")
+kwic(corpus_tokens, "fogo") %>% textplot_xray(scale = "relative")
 
 
+#==============================
+# 7️⃣ Similaridade e dendrograma
+#==============================
+# Normalizar por frequência relativa
+corpus_dfm_norm <- dfm_weight(corpus_dfm, "prop")
 
-# COMPARAÇÃO ENTRE LIVROS ------------------------------------------------------
-# normalizar os livros pelo seu tamanho
-corpus_dfm_norm <- dfm_weight(corpus_dfm, "count")     # prop, 
-corpus_simil <- textstat_simil(corpus_dfm_norm, 
-                               method = "correlation", #cosine, jaccard, dice
-                               margin = "documents",   #features
-                               upper = TRUE,
-                               diag = FALSE)
-# ver os resultados individualmente para cada livro
+# Similaridade por correlação
+corpus_simil <- textstat_simil(corpus_dfm_norm, method = "correlation")
 round(corpus_simil, 3)
 
 
-corpus_dist <- textstat_dist(corpus_dfm_norm, 
-                             method = "euclidean", #manhattan,minkowski
-                             margin = "documents")
-# ver os resultados individualmente para cada livro
-plot(hclust(corpus_dist))
+#========================================
+# 1️⃣ Heatmap da similaridade por correlação
+#========================================
+
+# Transformar o objeto textstat_simil em matriz
+sim_matrix <- as.matrix(corpus_simil)
+
+# Transformar em data.frame longo para ggplot
+sim_long <- melt(sim_matrix)
+colnames(sim_long) <- c("Livro1", "Livro2", "Correlacao")
+
+ggplot(sim_long, aes(x = Livro1, y = Livro2, fill = Correlacao)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Correlacao, 2)), size = 3) +
+  scale_fill_viridis(option = "C", limits = c(0,1)) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Heatmap de Similaridade Lexical entre Livros",
+    x = "",
+    y = "",
+    fill = "Correlação"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
 
 
 
-#-------------------------------------------------------------------------------
-
-# Criar um dataframe em que cada linha corresponda a uma unica palavra
-df.token <- df %>%
-  unnest_tokens(term, text)
-
-glimpse(df.token)
+# Distância euclidiana e dendrograma
+corpus_dist <- textstat_dist(corpus_dfm_norm, method = "euclidean")
+hclust_res <- hclust(as.dist(corpus_dist))
+plot(hclust_res)
 
 
-# importar lexico de sentimentos
+
+
+
+
+
+
+
+
+
+
+
+
+
+#==============================
+# 8️⃣ Tokenização e análise de sentimento
+#==============================
+df.token <- df %>% unnest_tokens(term, text)
+
+# Importar léxico de sentimentos
 data("oplexicon_v3.0")
-df.token <- df.token %>%
-  inner_join(oplexicon_v3.0, by = "term")
 
-# extrair capitulos de cada livro
+# Remover duplicações do léxico (evita join many-to-many)
+oplexicon_unique <- oplexicon_v3.0 %>%
+  distinct(term, .keep_all = TRUE)
+
+# Fazer o join dos termos do texto com o léxico
+df.token <- df.token %>%
+  inner_join(oplexicon_unique, by = "term")
+
+# Normalizar capítulos
+
 df_chapter_number <- df.token %>%
   distinct(book_name, chapter_name) %>%
   group_by(book_name) %>%
-  # normalizar capitulo de acordo com sua posicao no livro
-  mutate(chapter_number_norm = row_number()/max(row_number()))
+  mutate(chapter_number_norm = row_number() / max(row_number())) %>%
+  ungroup()
 
-glimpse(df_chapter_number)
-#-------------------------------------------------------------------------------
-
-# Sentimento por Capítulo ------------------------------------------------------
-
+# Sentimento por capítulo
 df.sentiment <- df.token %>%
-  # calcular sentimento por capitulo
   group_by(book_name, chapter_name) %>%
-  summarise(polarity = sum(polarity, 
-                           na.rm = TRUE)) %>%
+  summarise(polarity = sum(polarity, na.rm = TRUE)) %>%
   ungroup() %>%
-  # retornar posicao relativa (ou normalizada) do capitulo de cada livro
-  left_join(df_chapter_number) %>%
+  left_join(df_chapter_number, by = c("book_name", "chapter_name")) %>%
   arrange(book_name, chapter_number_norm)
 
+# Gráfico de sentimento por capítulo
+ggplot(df.sentiment, aes(x = chapter_number_norm, y = polarity)) +
+  geom_line(color = "black", linewidth = 0.8) +                 # linha
+  #geom_point(color = "darkred", size = 1.8, alpha = 0.8) +    # marcadores
+  facet_wrap(~ book_name, ncol = 4, labeller = label_wrap_gen(20)) +
+  labs(
+    #title = "Evolução do Sentimento ao Longo dos Capítulos",
+    x = "Posição relativa no livro",
+    y = "Sentimento (polaridade)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
 
-# grafico
-df.sentiment %>%
-  ggplot(aes(x = chapter_number_norm, 
-             y = polarity)) +
-  geom_line() +
-  facet_wrap(~ book_name, 
-             ncol = 4, 
-             labeller = label_wrap_gen(20)) +
-  labs(x = "Posição Relativa no Livro", 
-       y = "Estimativa de Sentimento") +
-  theme_gray()
-#-------------------------------------------------------------------------------
+
+#=========================================================#
+# 5️⃣ Gráfico complementar: sentimento médio por livro
+#=========================================================#
+
+df.sentiment_book <- df.sentiment %>%
+  group_by(book_name) %>%
+  summarise(sentimento_medio = mean(polarity, na.rm = TRUE)) %>%
+  arrange(desc(sentimento_medio))
+
+# Gráfico de barras ordenado
+ggplot(df.sentiment_book, aes(x = reorder(book_name, sentimento_medio),
+                              y = sentimento_medio,
+                              fill = sentimento_medio > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  geom_text(aes(label = round(sentimento_medio, 2)),
+            hjust = ifelse(df.sentiment_book$sentimento_medio > 0, -0.2, 1.2),
+            color = "black", size = 3.5) +
+  scale_fill_manual(values = c("TRUE" = "blue", "FALSE" = "red")) +
+  labs(
+    title = "Sentimento Médio por livro",
+    x = "",
+    y = "Polaridade média"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text.y = element_text(face = "bold")
+  ) +
+  expand_limits(y = c(min(df.sentiment_book$sentimento_medio) - 0.1,
+                      max(df.sentiment_book$sentimento_medio) + 0.1))
 
 
 
-# COMPLEXIDADE LÉXICA DAS PALAVRAS ---------------------------------------------
-# aplicando a funcao no objeto sem stopwords e pontuação
+
+
+#==============================
+# 9️⃣ Diversidade lexical (TTR)
+#==============================
+# Calcular diversidade lexical (TTR)
 lexdiv <- textstat_lexdiv(corpus_dfm, measure = "TTR")
-lexdiv
 
-#grafico
-lexdiv %>% 
-  as.data.frame() %>% 
-  magrittr::set_colnames("TTR") %>% 
-  tibble::rownames_to_column("livro") %>% 
-  mutate(livro = forcats::fct_reorder(livro, TTR)) %>% 
-  ggplot(aes(x = livro, y = TTR)) + 
-  geom_col(fill = "blue") +
-  coord_flip() + 
-  labs(x = NULL, y = "TTR") +
-  theme_minimal()
-
-
-
-
-
-#-------------------------------------------------------------------------------
-# Gráfico de Dispersão Lexico
-
-# Tokenizar o corpus
-tokens_corpus <- tokens(meu_corpus)
-# Encontrar as concordâncias da palavra "amor"
-concordancias <- kwic(tokens_corpus, "fogo")
-# Visualizar as concordâncias usando textplot_xray
-textplot_xray(concordancias, scale = "relative")
-
-
-#-------------------------------------------------------------------------------
-
-
+# Gráfico TTR
+lexdiv %>%
+  ggplot(aes(x = fct_reorder(document, TTR), y = TTR)) +
+  geom_col(fill = "cadetblue4") +
+  coord_flip() +
+  labs(x = NULL, y = "Tipo-Token Ratio (TTR)",
+       title = "Diversidade lexical dos livros") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
 
 
 
